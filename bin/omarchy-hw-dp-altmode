@@ -1,0 +1,36 @@
+#!/bin/bash
+
+# omarchy:summary=Returns true when external DisplayPort output over USB-C is wired up
+# omarchy:name=dp-altmode
+# omarchy:hidden=true
+
+# Apple Silicon Macs drive the internal panel from one display controller (dcp)
+# and any external DisplayPort output from a second one (dcpext). Asahi ships
+# dcpext disabled on t8103: no t8103 device tree enables it, so external DP over
+# USB-C does not come up at all. See docs/apple-silicon-dp-altmode.md.
+#
+# The check is on the live device tree rather than on the model, because whether
+# the route is available depends on the DTB in use, not on the machine. Both
+# halves have to hold: a USB-C connector must carry the "displayport" phandle,
+# and the node it points at must be enabled.
+
+device_tree="${OMARCHY_DEVICE_TREE:-/proc/device-tree}"
+
+[[ -d $device_tree ]] || exit 1
+
+for connector in "$device_tree"/soc/i2c@*/usb-pd@*/connector; do
+  [[ -r $connector/displayport ]] || continue
+
+  # Device tree phandles are 4 big-endian bytes; the node they name carries the
+  # same value in its own "phandle" property.
+  target=$(od -An -tx1 -v "$connector/displayport" 2>/dev/null | tr -d ' \n')
+  [[ -n $target ]] || continue
+
+  for node in "$device_tree"/soc/dcp*@* "$device_tree"/soc/dcpext*@*; do
+    [[ -r $node/phandle ]] || continue
+    [[ $(od -An -tx1 -v "$node/phandle" 2>/dev/null | tr -d ' \n') == "$target" ]] || continue
+    [[ $(tr -d '\0' <"$node/status" 2>/dev/null) == "okay" ]] && exit 0
+  done
+done
+
+exit 1

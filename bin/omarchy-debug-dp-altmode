@@ -1,0 +1,89 @@
+#!/bin/bash
+
+# omarchy:summary=Explain why an external display over USB-C is or is not working
+# omarchy:name=dp-altmode
+# omarchy:group=debug
+
+# Plugging a monitor into an Apple Silicon Mac and getting nothing is one of the
+# most common confusions on this hardware, and every layer fails quietly. This
+# walks the chain in order and stops at the first thing that is not in place, so
+# the answer is one line instead of an afternoon.
+#
+# No root, reads only. See docs/apple-silicon-dp-altmode.md for the background.
+
+device_tree="${OMARCHY_DEVICE_TREE:-/proc/device-tree}"
+typec_path="${OMARCHY_TYPEC_PATH:-/sys/class/typec}"
+drm_path="${OMARCHY_DRM_PATH:-/sys/class/drm}"
+
+dt_read() { tr -d '\0' <"$1" 2>/dev/null; }
+
+echo "External DisplayPort over USB-C"
+echo
+
+# 1. Is this even Apple Silicon? Everything below is specific to it.
+if [[ ! -r $device_tree/compatible ]] || ! grep -qai apple "$device_tree/compatible"; then
+  echo "  This is not an Apple Silicon machine; this check does not apply."
+  exit 0
+fi
+echo "  Machine: $(dt_read "$device_tree/model")"
+
+# 2. The second display controller. Without it there is no external output at
+#    all, and this is the state a stock Asahi install is in today.
+if omarchy-hw-dp-altmode; then
+  echo "  External DP controller (dcpext): enabled"
+else
+  echo "  External DP controller (dcpext): NOT enabled"
+  echo
+  echo "  This is the expected state on Asahi today, and it is why nothing"
+  echo "  appears when you plug a monitor in. Asahi marks DisplayPort alt mode"
+  echo "  on M1 as work in progress: no t8103 device tree enables dcpext yet."
+  echo "  Nothing is broken on your machine and there is no setting to change."
+  echo
+  echo "  See docs/apple-silicon-dp-altmode.md."
+  exit 0
+fi
+
+# 3. Which port is wired for DP. The sysfs portN index is assigned in i2c probe
+#    order and is not stable across boots, so it is resolved by i2c address.
+echo
+echo "  USB-C ports:"
+dp_addr=""
+for connector in "$device_tree"/soc/i2c@*/usb-pd@*/connector; do
+  [[ -d $connector ]] || continue
+  node=${connector%/connector}
+  addr=${node##*usb-pd@}
+  label=$(dt_read "$connector/label")
+  if [[ -r $connector/displayport ]]; then
+    dp_addr="0-00$addr"
+    printf '    %-8s %-20s DisplayPort: yes\n' "usb-pd@$addr" "${label:-?}"
+  else
+    printf '    %-8s %-20s DisplayPort: no\n' "usb-pd@$addr" "${label:-?}"
+  fi
+done
+
+# 4. Where the cable actually is. Resolved by i2c address, never by port number.
+echo
+cable_port=""
+cable_addr=""
+for port in "$typec_path"/port[0-9]; do
+  [[ -e ${port}-partner ]] || continue
+  cable_port=$(basename "$port")
+  cable_addr=$(readlink -f "$port" | grep -oE '0-00[0-9a-f]+')
+done
+
+if [[ -z $cable_port ]]; then
+  echo "  Cable: nothing plugged into any USB-C port."
+elif [[ $cable_addr == "$dp_addr" ]]; then
+  echo "  Cable: in the DisplayPort-capable port ($cable_addr) -- correct."
+else
+  echo "  Cable: in $cable_addr, which has no DisplayPort wired up."
+  echo "         Move it to the port marked 'DisplayPort: yes' above."
+fi
+
+# 5. What DRM ended up with.
+echo
+echo "  Display connectors:"
+for connector in "$drm_path"/card*-*; do
+  [[ -r $connector/status ]] || continue
+  printf '    %-22s %s\n' "$(basename "$connector")" "$(cat "$connector/status")"
+done
