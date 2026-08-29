@@ -65,9 +65,48 @@ pass "the diagnostic exits cleanly on non-Apple hardware"
 OUT=$(PATH="$ROOT/bin:$PATH" OMARCHY_DEVICE_TREE="$TMP/disabled" \
   OMARCHY_TYPEC_PATH="$TMP/none" OMARCHY_DRM_PATH="$TMP/none" \
   "$ROOT/bin/omarchy-debug-dp-altmode")
-[[ $OUT == *"work in progress"* && $OUT == *"Nothing is broken"* ]] ||
+[[ $OUT == *"expected state on a stock Asahi kernel"* && $OUT == *"Nothing is broken"* ]] ||
   fail "the diagnostic explains the stock Asahi state instead of reporting a fault" "$OUT"
 pass "the diagnostic explains the stock Asahi state instead of reporting a fault"
+
+# Asahi's own fairydust branch is where this is actually implemented. Without
+# naming it the doc reads as if the only route were a third party's patches.
+[[ $OUT == *"fairydust"* ]] ||
+  fail "the diagnostic points at Asahi's own branch rather than leaving it unnamed" "$OUT"
+pass "the diagnostic points at Asahi's own branch rather than leaving it unnamed"
+
+# A missing detector must never be reported as a negative result. Called by bare
+# name it is not on PATH in a checkout, and "NOT enabled" would then be
+# indistinguishable from a machine that genuinely lacks the route.
+ISOLATED="$TMP/isolated"
+mkdir -p "$ISOLATED"
+cp "$ROOT/bin/omarchy-debug-dp-altmode" "$ISOLATED/"
+set +e
+OUT=$(PATH=/usr/bin:/bin OMARCHY_PATH=/nonexistent OMARCHY_DEVICE_TREE="$TMP/ok" \
+  bash "$ISOLATED/omarchy-debug-dp-altmode" 2>&1)
+rc=$?
+set -e
+(( rc != 0 )) ||
+  fail "the diagnostic fails loudly when the detector is missing" "exit $rc: $OUT"
+[[ $OUT != *"NOT enabled"* ]] ||
+  fail "a missing detector is not reported as a negative result" "$OUT"
+pass "a missing detector fails loudly instead of reading as a negative result"
+
+# Resolved from the script's own directory, a checkout answers for itself.
+OUT=$(PATH=/usr/bin:/bin OMARCHY_PATH=/nonexistent OMARCHY_DEVICE_TREE="$TMP/ok" \
+  OMARCHY_TYPEC_PATH="$TMP/none" OMARCHY_DRM_PATH="$TMP/none" \
+  bash "$ROOT/bin/omarchy-debug-dp-altmode")
+[[ $OUT == *"controller: enabled"* ]] ||
+  fail "the diagnostic finds the detector next to itself when run from a checkout" "$OUT"
+pass "the diagnostic finds the detector next to itself when run from a checkout"
+
+# HDMI is a separate path and works on the machines that have the port. Without
+# saying so, someone on a 14"/16" reads this as "no external display at all".
+grep -q 'HDMI' "$ROOT/docs/apple-silicon-dp-altmode.md" ||
+  fail "the doc puts HDMI outside its scope"
+grep -q 'fairydust' "$ROOT/docs/apple-silicon-dp-altmode.md" ||
+  fail "the doc names Asahi's fairydust branch as the canonical work"
+pass "the doc scopes out HDMI and names fairydust"
 
 # portN is assigned in i2c probe order and has been observed to swap between two
 # boots on the same machine, so nothing may resolve the port by its number.

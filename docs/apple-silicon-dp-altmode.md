@@ -1,10 +1,13 @@
 # Apple Silicon: external DisplayPort over USB-C
 
-Plugging an external monitor into an Apple Silicon Mac running Asahi and getting
-nothing at all is expected today, not a fault. This documents why, so the
+Plugging a monitor into an Apple Silicon Mac **over USB-C** and getting nothing
+is expected on a stock Asahi kernel, not a fault. This documents why, so the
 question can be answered in one line instead of an afternoon of cable swapping.
 
-Observed on a MacBook Pro 13" M1 (j293) on Asahi Alarm with `linux-asahi` 7.1.6.
+**This is about DisplayPort over USB-C only.** Machines with a dedicated HDMI
+port — the 14" and 16" MacBook Pros and the Mac mini — drive it through a
+separate path that is not covered here, and it appears as its own DRM connector
+(`HDMI-A-1`). If you have an HDMI port, try it: nothing below applies to it.
 
 ## Symptoms
 
@@ -18,20 +21,29 @@ Observed on a MacBook Pro 13" M1 (j293) on Asahi Alarm with `linux-asahi` 7.1.6.
 
 ## Why nothing happens
 
-Apple Silicon has two display controllers. The internal panel is driven by
-`dcp`; anything external goes through a second one, `dcpext`. **No t8103 device
-tree enables `dcpext`**, not even in `asahi-wip-7.2`, so there is no controller
-for an external display to attach to. Asahi marks DisplayPort alt mode on M1 as
-work in progress.
+Apple Silicon drives external displays from a display controller that a stock
+Asahi device tree leaves disabled, and it does not wire any USB-C connector to
+one. With no connector pointing at an enabled controller, there is nothing for
+an external display to attach to, and the plug event goes nowhere.
 
-That is the whole answer for a stock install. Everything below it in the chain
-works and is already merged: the Type-C PHY does DP mode, the display crossbar
-is wired, and the cd321x driver registers the port altmodes, switches the mux
-and reads DisplayPort status out of the controller.
+The exact shape differs by SoC, but the outcome is the same:
 
-What makes this expensive to diagnose is that every layer fails *silently*.
+- **M1 (t8103)** — the second controller is `dcpext`, and no stock t8103 device
+  tree enables it. This is the case the detector was first written against.
+- **M2 Pro/Max (t6021)** — there is no `dcpext` node at all, just several `dcp@`
+  nodes, and no connector carries a `displayport` property. Verified on an
+  `apple,j414c`.
+
+That is why the check follows each USB-PD connector's `displayport` phandle to
+whichever controller it names and tests *that* node's status, rather than
+looking for a node called `dcpext`. It gives the right answer on both shapes.
+
+What makes this expensive to diagnose is that every layer fails **silently**.
 There is no error in `dmesg`, nothing in the compositor log, and each failure
-looks exactly like the one before it from userspace.
+looks exactly like the one before it from userspace. Everything below the
+missing controller works and is already merged: the Type-C PHY does DP mode, the
+display crossbar is wired, and the cd321x driver registers the port altmodes,
+switches the mux and reads DisplayPort status.
 
 ## Two things that look like faults and are not
 
@@ -44,9 +56,10 @@ a monitor is attached is what success looks like, not a bad cable.
 
 ## The port matters, and its number does not
 
-Not every USB-C port has DisplayPort wired to a display-capable PHY. On j293
-only one of the two does — the lower one on the left edge, furthest from the
-hinge, which the device tree labels `USB-C Left-front` at i2c address `0-003f`.
+Where DisplayPort is wired is fixed per machine and is usually a single port.
+Asahi's own work names them for M1: the front-left USB-C on the 13" MacBook Pro
+and Air, the port next to HDMI on the Mac mini, the back-left on the 2-port
+iMac, and the back-right-middle on the 4-port iMac.
 
 The `portN` index under `/sys/class/typec` is assigned in i2c probe order and
 **is not stable across boots**: the same physical port was observed as `port1`
@@ -60,8 +73,8 @@ omarchy debug dp-altmode
 ```
 
 walks the chain in order and stops at the first thing that is not in place:
-whether `dcpext` is enabled, which port carries DisplayPort, where the cable
-actually is, and what DRM ended up with.
+whether a DisplayPort-capable controller is enabled, which port carries
+DisplayPort, where the cable actually is, and what DRM ended up with.
 
 ```bash
 omarchy-hw-dp-altmode
@@ -72,14 +85,25 @@ USB-C connector carries the `displayport` phandle and that the node it names is
 enabled. Either half alone is a half-configured machine, which is why the check
 requires both.
 
-## Enabling it
+## Where the real work is happening
 
-Out of scope for this repository at present. Making external DisplayPort work on
-M1 needs a patched device tree plus two out-of-tree kernel modules, and a kernel
-update silently reverts all of it, so it is not something to turn on by default
-in a distribution that updates kernels unattended.
+Asahi implements DisplayPort alt mode on the **`fairydust`** branch of their
+downstream tree — the device tree changes for t8103, t8112 and t60xx, plus the
+`tipd` change that forwards the hotplug event to DRM. That is the canonical
+work, it covers M1, M2 and M1/M2 Pro/Max, and it is what converges upstream.
 
-A working implementation, the evidence behind it, and the one unresolved bug are
-written up at https://github.com/haripako/dp-altmode. The kernel-side fix it
-depends on is being sent to AsahiLinux/linux separately; once DisplayPort alt
-mode lands upstream, none of this is needed.
+Take it on its own terms: the commits are titled "dp-altmode dts **hacks**" and
+"**HACK**: Use drm oob hotplug event" by their own authors, it blesses one
+specific port per machine rather than enabling them all, and it carries the
+usual downstream caveats — experimental, provided as-is, with cold- and hot-plug
+quirks. It is not a supported configuration until Asahi says it is.
+
+Enabling any of this is out of scope for Omarchy at present. It needs a patched
+device tree plus out-of-tree kernel modules, and a kernel update silently
+reverts all of it, so it is not something to turn on by default in a
+distribution that updates kernels unattended.
+
+For an M1-specific writeup — the full chain, the evidence, and one unresolved
+bug — see https://github.com/haripako/dp-altmode. It backports the `fairydust`
+`tipd` change unmodified and is an additional reference, not a substitute for
+the branch above.

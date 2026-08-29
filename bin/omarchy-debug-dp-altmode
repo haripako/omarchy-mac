@@ -4,12 +4,31 @@
 # omarchy:name=dp-altmode
 # omarchy:group=debug
 
-# Plugging a monitor into an Apple Silicon Mac and getting nothing is one of the
-# most common confusions on this hardware, and every layer fails quietly. This
-# walks the chain in order and stops at the first thing that is not in place, so
-# the answer is one line instead of an afternoon.
+# Plugging a monitor into an Apple Silicon Mac over USB-C and getting nothing is
+# one of the most common confusions on this hardware, and every layer fails
+# quietly. This walks the chain in order and stops at the first thing that is not
+# in place, so the answer is one line instead of an afternoon.
+#
+# DisplayPort over USB-C only. Machines with a dedicated HDMI port drive it
+# through a separate path this says nothing about.
 #
 # No root, reads only. See docs/apple-silicon-dp-altmode.md for the background.
+
+# Resolve the detector explicitly. Called by bare name it is not found when this
+# runs from a checkout rather than an installed PATH, and a missing command would
+# then read exactly like a real negative — the worst failure mode a diagnostic
+# has. Prefer the copy next to this script, so a checkout tests itself.
+SELF_BIN=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+for candidate in \
+  "$SELF_BIN/omarchy-hw-dp-altmode" \
+  "${OMARCHY_PATH:-/usr/share/omarchy}/bin/omarchy-hw-dp-altmode"; do
+  [[ -x $candidate ]] && hw_dp_altmode=$candidate && break
+done
+[[ -n ${hw_dp_altmode:-} ]] || hw_dp_altmode=$(command -v omarchy-hw-dp-altmode || true)
+if [[ -z ${hw_dp_altmode:-} ]]; then
+  echo "omarchy-hw-dp-altmode not found; cannot report on the DisplayPort route." >&2
+  exit 1
+fi
 
 device_tree="${OMARCHY_DEVICE_TREE:-/proc/device-tree}"
 typec_path="${OMARCHY_TYPEC_PATH:-/sys/class/typec}"
@@ -18,6 +37,7 @@ drm_path="${OMARCHY_DRM_PATH:-/sys/class/drm}"
 dt_read() { tr -d '\0' <"$1" 2>/dev/null; }
 
 echo "External DisplayPort over USB-C"
+echo "(HDMI, where present, is a separate path and is not covered here.)"
 echo
 
 # 1. Is this even Apple Silicon? Everything below is specific to it.
@@ -29,15 +49,19 @@ echo "  Machine: $(dt_read "$device_tree/model")"
 
 # 2. The second display controller. Without it there is no external output at
 #    all, and this is the state a stock Asahi install is in today.
-if omarchy-hw-dp-altmode; then
-  echo "  External DP controller (dcpext): enabled"
+if "$hw_dp_altmode"; then
+  echo "  DisplayPort-capable display controller: enabled"
 else
-  echo "  External DP controller (dcpext): NOT enabled"
+  echo "  DisplayPort-capable display controller: NOT enabled"
   echo
-  echo "  This is the expected state on Asahi today, and it is why nothing"
-  echo "  appears when you plug a monitor in. Asahi marks DisplayPort alt mode"
-  echo "  on M1 as work in progress: no t8103 device tree enables dcpext yet."
-  echo "  Nothing is broken on your machine and there is no setting to change."
+  echo "  This is the expected state on a stock Asahi kernel, and it is why"
+  echo "  nothing appears when you plug a monitor into USB-C. No connector"
+  echo "  points at an enabled display controller, so the plug event has"
+  echo "  nowhere to go. Nothing is broken on your machine and there is no"
+  echo "  setting to change."
+  echo
+  echo "  Asahi implements this on their downstream 'fairydust' branch, which"
+  echo "  is experimental and blesses one specific port per machine."
   echo
   echo "  See docs/apple-silicon-dp-altmode.md."
   exit 0
