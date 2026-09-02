@@ -7,19 +7,29 @@ source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/base-test.sh"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
-# A device tree fixture. phandle values are 4 big-endian bytes, the same encoding
-# the kernel exposes under /proc/device-tree.
+# A device tree fixture, shaped after the real t8103-j293 tree as the kernel
+# exposes it. Both display controllers are named "dcp@" -- the external one is
+# dcp@271c00000 and is external by virtue of its compatible string, not its name.
+# phandle values are 4 big-endian bytes, the same encoding /proc/device-tree uses.
 make_tree() { # make_tree <dir> <dcpext-status> <wire-displayport:yes|no>
   local dir=$1 status=$2 wired=$3
-  local dcp="$dir/soc/dcp@271c00000"
+  local internal="$dir/soc/dcp@231c00000"
+  local external="$dir/soc/dcp@271c00000"
   local conn="$dir/soc/i2c@235010000/usb-pd@3f/connector"
   local other="$dir/soc/i2c@235010000/usb-pd@38/connector"
 
-  mkdir -p "$dcp" "$conn" "$other"
+  mkdir -p "$internal" "$external" "$conn" "$other"
   printf 'apple,j293\0apple,t8103\0' >"$dir/compatible"
   printf 'Apple MacBook Pro (13-inch, M1, 2020)\0' >"$dir/model"
-  printf '\x00\x00\x00\x45' >"$dcp/phandle"
-  printf '%s\0' "$status" >"$dcp/status"
+
+  printf 'apple,t8103-dcp\0apple,dcp\0' >"$internal/compatible"
+  printf '\x00\x00\x00\x26' >"$internal/phandle"
+  printf 'okay\0' >"$internal/status"
+
+  printf 'apple,t8103-dcpext\0apple,dcpext\0' >"$external/compatible"
+  printf '\x00\x00\x00\x45' >"$external/phandle"
+  printf '%s\0' "$status" >"$external/status"
+
   printf 'USB-C Left-front\0' >"$conn/label"
   printf 'USB-C Left-back\0' >"$other/label"
   [[ $wired == "yes" ]] && printf '\x00\x00\x00\x45' >"$conn/displayport"
@@ -51,6 +61,15 @@ printf '\x00\x00\x00\x99' >"$TMP/dangling/soc/i2c@235010000/usb-pd@3f/connector/
 OMARCHY_DEVICE_TREE="$TMP/dangling" "$ROOT/bin/omarchy-hw-dp-altmode" &&
   fail "dp-altmode is not detected when the phandle names no enabled node"
 pass "dp-altmode is not detected when the phandle names no enabled node"
+
+# The internal panel controller is enabled on every machine. Keying on the node
+# name would accept it, since it is called dcp@ exactly like the external one --
+# only the compatible string separates them.
+make_tree "$TMP/internal" okay yes
+printf '\x00\x00\x00\x26' >"$TMP/internal/soc/i2c@235010000/usb-pd@3f/connector/displayport"
+OMARCHY_DEVICE_TREE="$TMP/internal" "$ROOT/bin/omarchy-hw-dp-altmode" &&
+  fail "dp-altmode is not detected when the phandle names the internal controller"
+pass "dp-altmode is not detected when the phandle names the internal controller"
 
 # Non-Apple hardware must fall out of the diagnostic without claiming anything.
 mkdir -p "$TMP/pc"
