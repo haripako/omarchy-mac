@@ -21,22 +21,39 @@ separate path that is not covered here, and it appears as its own DRM connector
 
 ## Why nothing happens
 
-Apple Silicon drives external displays from a display controller that a stock
-Asahi device tree leaves disabled, and it does not wire any USB-C connector to
-one. With no connector pointing at an enabled controller, there is nothing for
-an external display to attach to, and the plug event goes nowhere.
+Apple Silicon drives external displays from a display controller separate from
+the one running the internal panel. A stock Asahi device tree does not wire any
+USB-C connector to that controller, and on some SoCs leaves it disabled as well.
+With no connector pointing at an enabled external controller, there is nothing
+for an external display to attach to, and the plug event goes nowhere.
 
 The exact shape differs by SoC, but the outcome is the same:
 
-- **M1 (t8103)** — the second controller is `dcpext`, and no stock t8103 device
-  tree enables it. This is the case the detector was first written against.
-- **M2 Pro/Max (t6021)** — there is no `dcpext` node at all, just several `dcp@`
-  nodes, and no connector carries a `displayport` property. Verified on an
-  `apple,j414c`.
+- **M1 (t8103)** — the external controller is `dcp@271c00000`, compatible
+  `apple,t8103-dcpext`. The stock `t8103-j293.dtb` ships it `status = "disabled"`
+  and no connector carries a `displayport` property. Verified by comparing the
+  stock and patched DTBs for this machine.
+- **M2 Pro/Max (t6021)** — three display controllers, of which two are
+  `apple,t6020-dcpext` and one of those is *enabled*; no connector carries
+  `displayport`. Verified on an `apple,j414c`. External display still does not
+  come up there, so on t6021 a disabled controller is not the whole story — the
+  missing connector wiring is what both shapes have in common.
+
+Note that the external controller is not named `dcpext` on either machine. Every
+display controller is called `dcp@`; "dcpext-ness" lives in the compatible
+string, so a glob for `dcpext@` matches nothing on any Apple Silicon Mac.
 
 That is why the check follows each USB-PD connector's `displayport` phandle to
-whichever controller it names and tests *that* node's status, rather than
-looking for a node called `dcpext`. It gives the right answer on both shapes.
+whichever controller it names, confirms that node is an external one by its
+compatible string, and tests its status. It gives the right answer on both
+shapes.
+
+On a stock tree the check reports the route as not enabled, which is the correct
+answer and the state nearly every machine is in. It reports it as enabled only
+once a device tree actually wires a connector to an enabled external controller,
+which today means one of the patched trees described below. The M1 this was
+written against runs such a tree, which is why the check can be seen returning
+both answers; on a stock kernel it returns only the first.
 
 What makes this expensive to diagnose is that every layer fails **silently**.
 There is no error in `dmesg`, nothing in the compositor log, and each failure

@@ -127,6 +127,17 @@ grep -q 'fairydust' "$ROOT/docs/apple-silicon-dp-altmode.md" ||
   fail "the doc names Asahi's fairydust branch as the canonical work"
 pass "the doc scopes out HDMI and names fairydust"
 
+# A reader on a stock kernel must be told that "not enabled" is the expected
+# answer there, and that the machine this was written on runs a patched tree --
+# without it the two results read as a contradiction rather than as the check
+# working.
+grep -q 'On a stock tree the check reports the route as not enabled' \
+  "$ROOT/docs/apple-silicon-dp-altmode.md" ||
+  fail "the doc says a stock tree is expected to report the route as not enabled"
+grep -q 'runs such a tree' "$ROOT/docs/apple-silicon-dp-altmode.md" ||
+  fail "the doc states that the machine it was written against runs a patched tree"
+pass "the doc separates the stock answer from the patched one"
+
 # portN is assigned in i2c probe order and has been observed to swap between two
 # boots on the same machine, so nothing may resolve the port by its number.
 grep -q 'portN' "$ROOT/bin/omarchy-debug-dp-altmode" ||
