@@ -138,6 +138,23 @@ grep -q 'runs such a tree' "$ROOT/docs/apple-silicon-dp-altmode.md" ||
   fail "the doc states that the machine it was written against runs a patched tree"
 pass "the doc separates the stock answer from the patched one"
 
+# t8112 is the third shape and the strongest case for testing both halves: the
+# M2 mini ships the external controller enabled and still has no connector
+# wired to it. A check that accepted an enabled controller alone would call
+# that machine working.
+grep -q 't8112' "$ROOT/docs/apple-silicon-dp-altmode.md" ||
+  fail "the doc covers t8112 alongside t8103 and t6021"
+grep -q 'j473' "$ROOT/docs/apple-silicon-dp-altmode.md" ||
+  fail "the doc records the enabled-controller-but-unwired machine"
+pass "the doc covers t8112 and the enabled-but-unwired case"
+
+# A DisplayLink dock sold as a DisplayPort adapter fails in exactly the shape
+# this doc describes, for an unrelated reason. Naming the vendor id is what
+# lets someone tell the two apart.
+grep -q '17e9' "$ROOT/docs/apple-silicon-dp-altmode.md" ||
+  fail "the doc names the DisplayLink vendor id so the two failures can be told apart"
+pass "the doc separates a DisplayLink adapter from the alt-mode gap"
+
 # portN is assigned in i2c probe order and has been observed to swap between two
 # boots on the same machine, so nothing may resolve the port by its number.
 grep -q 'portN' "$ROOT/bin/omarchy-debug-dp-altmode" ||
